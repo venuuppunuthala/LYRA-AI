@@ -1,0 +1,9 @@
+{
+  "name": "LYRA Ai",
+  "description": "A world-class multi-modal AI assistant powered by Gemini technology, featuring a minimalist home interface and powerful generation capabilities.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
