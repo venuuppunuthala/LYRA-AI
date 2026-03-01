@@ -9,6 +9,7 @@ import CameraCapture from './components/CameraCapture';
 import GoogleLoginModal from './components/GoogleLoginModal';
 import { generateTextChat, generateImage } from './services/gemini';
 import { GoogleGenAI, Type } from "@google/genai";
+import pptxgen from "pptxgenjs";
 
 type AppView = 'chat' | 'library';
 type LibraryTab = 'Images' | 'Pages' | 'PPT' | 'Quizzes';
@@ -19,11 +20,13 @@ interface UserProfile {
   photo: string;
 }
 
+const STORAGE_KEY = 'lyra_ai_sessions_v14';
+
 const App: React.FC = () => {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<AppView>('chat');
-  const [libraryInitialTab, setLibraryInitialTab] = useState<LibraryTab>('Pages');
+  const [libraryInitialTab, setLibraryInitialTab] = useState<LibraryTab>('Images');
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const [isCameraMode, setIsCameraMode] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -36,8 +39,22 @@ const App: React.FC = () => {
   const [fullScreenPPT, setFullScreenPPT] = useState<{ data: PPTData; slideIndex: number } | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const isInitialMount = useRef(true);
 
   useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setSessions(parsed);
+          setCurrentSessionId(parsed[0].id);
+        }
+      } catch (e) {
+        console.error("Failed to parse saved sessions", e);
+      }
+    }
+    
     const checkKey = async () => {
       if (window.aistudio) {
         const selected = await window.aistudio.hasSelectedApiKey();
@@ -47,19 +64,17 @@ const App: React.FC = () => {
       }
     };
     checkKey();
-    
-    if (sessions.length === 0) {
-      const initialId = crypto.randomUUID();
-      const initialSession: ChatSession = {
-        id: initialId,
-        title: 'New LYRA',
-        messages: [],
-        updatedAt: Date.now()
-      };
-      setSessions([initialSession]);
-      setCurrentSessionId(initialId);
-    }
+    isInitialMount.current = false;
   }, []);
+
+  useEffect(() => {
+    if (isInitialMount.current) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+    
+    if (sessions.length === 0 && !isLoading) {
+      createNewSession('chat');
+    }
+  }, [sessions, isLoading]);
 
   const handleSelectApiKey = async () => {
     if (window.aistudio) {
@@ -75,59 +90,83 @@ const App: React.FC = () => {
       const modelMessage: Message = {
         id: crypto.randomUUID(),
         role: 'model',
-        text: "I'm ready to help you create a stunning presentation. What is the **topic** you'd like to present on?",
+        text: "Elite PPT Designer engaged. To architect your premium deck, please start by defining the **Topic**.",
         timestamp: Date.now()
       };
       setSessions(prev => prev.map(s => s.id === activeSession.id ? { ...s, messages: [modelMessage] } : s));
     }
     if (activeSession?.isQuiz && activeSession.messages.length === 0 && !isLoading) {
-        const modelMessage: Message = {
-          id: crypto.randomUUID(),
-          role: 'model',
-          text: "Welcome to **Quiz Mode**! What topic would you like to be tested on today?",
-          timestamp: Date.now()
-        };
-        setSessions(prev => prev.map(s => s.id === activeSession.id ? { ...s, messages: [modelMessage] } : s));
-      }
+      const modelMessage: Message = {
+        id: crypto.randomUUID(),
+        role: 'model',
+        text: "Academic Calibration initialized. To begin the assessment, please define the **Topic** you'd like to be quizzed on.",
+        timestamp: Date.now()
+      };
+      setSessions(prev => prev.map(s => s.id === activeSession.id ? { ...s, messages: [modelMessage] } : s));
+    }
   }, [activeSession?.id, activeSession?.isPPT, activeSession?.isQuiz]);
 
-  const handleDeleteSession = (id: string) => {
-    setSessions(prev => {
-      const filtered = prev.filter(s => s.id !== id);
-      if (filtered.length === 0) {
-        const newId = crypto.randomUUID();
-        return [{ id: newId, title: 'New LYRA', messages: [], updatedAt: Date.now() }];
+  const generatePptxFile = async (data: PPTData): Promise<string> => {
+    const pres = new pptxgen();
+    pres.layout = 'LAYOUT_16x9';
+
+    for (const slideData of data.slides) {
+      const slide = pres.addSlide();
+      if (slideData.imageUrl) {
+        slide.background = { path: slideData.imageUrl };
+      } else {
+        slide.background = { color: slideData.accentColor?.replace('#', '') || '0F1118' };
       }
-      return filtered;
-    });
-    if (currentSessionId === id) setCurrentSessionId(null);
-  };
-
-  const handleRenameSession = (id: string, newTitle: string) => {
-    setSessions(prev => prev.map(s => s.id === id ? { ...s, title: newTitle } : s));
-  };
-
-  const handleStop = () => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
+      slide.addShape(pres.ShapeType.rect, {
+        x: 0, y: 0, w: '100%', h: '100%',
+        fill: { color: '000000', transparency: 50 }
+      });
+      slide.addText(slideData.title, {
+        x: 0.5, y: 0.5, w: '90%',
+        fontSize: 44, bold: true, color: 'FFFFFF',
+        fontFace: 'Inter'
+      });
+      if (slideData.subtitle) {
+        slide.addText(slideData.subtitle, {
+          x: 0.5, y: 1.5, w: '90%',
+          fontSize: 24, color: 'BBBBBB',
+          fontFace: 'Inter'
+        });
+      }
+      const bulletPoints = slideData.content.map(text => ({ text, options: { bullet: true, color: 'EEEEEE', fontSize: 18 } }));
+      slide.addText(bulletPoints as any, {
+        x: 0.5, y: 2.5, w: '90%', h: 3,
+        valign: 'top', fontFace: 'Inter'
+      });
     }
-    setIsLoading(false);
+    const blob = await pres.write('blob');
+    return URL.createObjectURL(blob as Blob);
   };
 
-  const startPPTGeneration = async (topic: string, slideCount: number, context: string = "") => {
+  const startPPTGeneration = async (topic: string, slideCount: number, context: string = "", attachments: Attachment[] = []) => {
     setIsLoading(true);
     try {
+      if (!hasApiKey) await handleSelectApiKey();
+      const themeImageUrl = await generateImage(`Hyper-realistic cinematic professional cover slide for a presentation titled "${topic}", futuristic minimal design, 8k resolution, elegant lighting`, '2K', '16:9');
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-      const promptText = `Generate a detailed presentation for the topic "${topic}" with exactly ${slideCount} slides.
-        ${context ? `Analyze and use the following provided content to structure the slides: "${context.slice(0, 5000)}"` : "Use your internal high-quality knowledge base."}
-        Each slide must have a title, layout type ('hero', 'split', 'grid', 'list', 'image-focus'), and points.
-        Return ONLY valid JSON matching the PPTData schema.`;
-
+      const parts: any[] = [{ 
+        text: `Act as an Elite Gemini PPT Architect. Synthesize a professional, high-impact deck for "${topic}". 
+        Slide count: ${slideCount}. 
+        Context/Data provided: ${context || "AI-driven research"}.
+        Create a fluid narrative flow. Return ONLY valid JSON.` 
+      }];
+      for (const att of attachments) {
+        if (att.data) {
+          parts.push({
+            inlineData: { mimeType: att.mimeType, data: att.data }
+          });
+        }
+      }
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: [{ role: 'user', parts: [{ text: promptText }] }],
+        model: 'gemini-3-pro-preview',
+        contents: [{ role: 'user', parts }],
         config: {
+          thinkingConfig: { thinkingBudget: 12000 },
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
@@ -141,34 +180,41 @@ const App: React.FC = () => {
                     layout: { type: Type.STRING, enum: ['hero', 'split', 'grid', 'list', 'image-focus'] },
                     title: { type: Type.STRING },
                     subtitle: { type: Type.STRING },
-                    content: { type: Type.ARRAY, items: { type: Type.STRING } }
+                    content: { type: Type.ARRAY, items: { type: Type.STRING } },
+                    accentColor: { type: Type.STRING },
+                    imagePrompt: { type: Type.STRING }
                   },
-                  required: ['layout', 'title', 'content']
+                  required: ['layout', 'title', 'content', 'accentColor']
                 }
               }
             }
           }
         }
       });
-
       const pptData: PPTData = JSON.parse(response.text);
-      pptData.slides = pptData.slides.map(slide => ({
+      pptData.slides = pptData.slides.map((slide: any, idx) => ({
         ...slide,
-        imageUrl: `https://images.unsplash.com/photo-1501504905252-473c47e087f8?auto=format&fit=crop&q=80&w=800&q=topic=${encodeURIComponent(topic + " " + slide.title)}`
+        imageUrl: idx === 0 && themeImageUrl 
+          ? themeImageUrl 
+          : `https://images.unsplash.com/photo-1557804506-669a67965ba0?auto=format&fit=crop&q=80&w=1200&q=${encodeURIComponent(slide.imagePrompt || topic)}`
       }));
-
+      const pptxUrl = await generatePptxFile(pptData);
       const modelMessage: Message = {
         id: crypto.randomUUID(),
         role: 'model',
-        text: `Presentation on **"${topic}"** generated successfully. Click the preview to view in full screen. You can also download it below.`,
+        text: `Gemini Synthesis complete for **"${topic}"**. I've architected a **${slideCount}**-slide deck. All visuals are synthesized and ready for export.`,
         timestamp: Date.now(),
         pptData,
-        attachments: [{ type: 'ppt', name: `${topic.slice(0, 15)}.pptx`, url: '#', mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }]
+        attachments: [{ 
+          type: 'ppt', 
+          name: `${topic.replace(/[^a-z0-9]/gi, '_').slice(0, 20)}.pptx`, 
+          url: pptxUrl, 
+          mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' 
+        }]
       };
-
       setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, modelMessage], pptState: { ...s.pptState!, step: 'completed' } } : s));
     } catch (error: any) {
-      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, { id: crypto.randomUUID(), role: 'model', text: `Error: ${error.message}`, timestamp: Date.now() } as Message] } : s));
+      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, { id: crypto.randomUUID(), role: 'model', text: `Gemini Alert: ${error.message}`, timestamp: Date.now() } as Message] } : s));
     } finally {
       setIsLoading(false);
     }
@@ -178,13 +224,9 @@ const App: React.FC = () => {
     setIsLoading(true);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
-      const prompt = `Generate 5 challenging MCQ questions for the topic "${topic}" with ${difficulty} difficulty level.
-        Each question must have exactly 4 options, a correctIndex (0-3), a detailed simple explanation, and a relatable real-world example.
-        Return ONLY valid JSON matching an array of QuizQuestion objects.`;
-
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        contents: [{ role: 'user', parts: [{ text: `Generate 5 high-quality MCQ for "${topic}" at ${difficulty} level. Focus on reasoning and provide detailed explanations.` }] }],
         config: {
           responseMimeType: "application/json",
           responseSchema: {
@@ -203,72 +245,81 @@ const App: React.FC = () => {
           }
         }
       });
-
       const questions: QuizQuestion[] = JSON.parse(response.text);
       const modelMessage: Message = {
         id: crypto.randomUUID(),
         role: 'model',
-        text: `The ${difficulty} level quiz on **"${topic}"** is ready! Let's see what you know.`,
+        text: `Technical assessment for **"${topic}"** at **${difficulty}** level is synthesized. Let's begin.`,
         timestamp: Date.now(),
         quizQuestions: questions
       };
-
       setSessions(prev => prev.map(s => s.id === currentSessionId ? { 
         ...s, 
         messages: [...s.messages, modelMessage],
         quizState: { ...s.quizState!, step: 'ongoing', difficulty: difficulty as any, currentQuestionIndex: 0, score: 0 }
       } : s));
     } catch (error: any) {
-       const errMessage: Message = { id: crypto.randomUUID(), role: 'model', text: `Failed to start quiz: ${error.message}`, timestamp: Date.now() };
-       setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, errMessage] } : s));
+       setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, { id: crypto.randomUUID(), role: 'model', text: `Synthesis failed: ${error.message}`, timestamp: Date.now() } as Message] } : s));
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleSendMessage = async (text: string, attachments: Attachment[], isMoreInfoRequest: boolean = false, options?: any) => {
+  const handleDeleteSession = (id: string) => {
+    setSessions(prev => prev.filter(s => s.id !== id));
+    if (currentSessionId === id) setCurrentSessionId(null);
+  };
+
+  const handleRenameSession = (id: string, newTitle: string) => {
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, title: newTitle } : s));
+  };
+
+  const handleStop = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsLoading(false);
+  };
+
+  const handleSendMessage = async (text: string, attachments: Attachment[], isMoreInfoRequest: boolean = false, options?: any, targetSessionId?: string) => {
+    const sessId = targetSessionId || currentSessionId;
     if (!user) {
       setIsLoginModalOpen(true);
       if (text) setQueuedInputText(text);
       if (attachments.length > 0) setQueuedAttachments(attachments);
       return;
     }
-    
-    if (!currentSessionId || (!text.trim() && attachments.length === 0)) return;
+    if (!sessId || (!text.trim() && attachments.length === 0)) return;
 
-    // Handle Control Commands
     if (text === '/quit-quiz') {
-        const score = activeSession.quizState?.score || 0;
-        const modelMessage: Message = {
-            id: crypto.randomUUID(),
-            role: 'model',
-            text: `Quiz terminated. You scored **${score}/5**. ${score >= 4 ? "Excellent effort!" : "Good try!"} What's next?`,
-            timestamp: Date.now()
-        };
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, modelMessage], isQuiz: false, quizState: undefined } : s));
+        const score = activeSession?.quizState?.score || 0;
+        const msgText = score >= 4 ? `Cycle complete. Exceptional proficiency achieved: **${score}/5**. Mastery validated.` : `Assessment cycle ended. Final calibration: **${score}/5**. Returning to core logic.`;
+        const modelMessage: Message = { id: crypto.randomUUID(), role: 'model', text: msgText, timestamp: Date.now() };
+        setSessions(prev => prev.map(s => s.id === sessId ? { ...s, messages: [...s.messages, modelMessage], isQuiz: false, quizState: undefined } : s));
         return;
     }
 
     if (text.startsWith('/ppt-method')) {
       const method = text.split(' ')[1] as 'generate' | 'paste' | 'import';
-      const state = activeSession.pptState!;
-      const newState: PPTState = { ...state, method };
+      const state = activeSession?.pptState!;
+      const newState: PPTState = { ...state, method, step: method === 'generate' ? 'generating' : 'input' };
+      setSessions(prev => prev.map(s => s.id === sessId ? { ...s, pptState: newState } : s));
       if (method === 'generate') {
-        newState.step = 'generating';
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, pptState: newState } : s));
         startPPTGeneration(state.topic!, state.slideCount!);
-      } else {
-        newState.step = 'input';
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, pptState: newState } : s));
-        const modelMsg: Message = { id: crypto.randomUUID(), role: 'model', text: `Please ${method === 'paste' ? 'paste the text content' : 'import the PDF file'} you want me to use for the presentation.`, timestamp: Date.now() };
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, modelMsg] } : s));
+      } else if (method === 'paste') {
+        const modelMsg: Message = { id: crypto.randomUUID(), role: 'model', text: `Blueprint buffer ready for **"${state.topic}"**. Please paste your text context for synthesis.`, timestamp: Date.now() };
+        setSessions(prev => prev.map(s => s.id === sessId ? { ...s, messages: [...s.messages, modelMsg] } : s));
+      } else if (method === 'import') {
+        const modelMsg: Message = { id: crypto.randomUUID(), role: 'model', text: `Upload sensor active. Please import the PDF blueprint for the **"${state.topic}"** deck.`, timestamp: Date.now() };
+        setSessions(prev => prev.map(s => s.id === sessId ? { ...s, messages: [...s.messages, modelMsg] } : s));
       }
       return;
     }
 
     if (text.startsWith('/quiz-level')) {
         const level = text.split(' ')[1];
-        startQuizGeneration(activeSession.quizState?.topic || "General Knowledge", level);
+        startQuizGeneration(activeSession?.quizState?.topic || "Synthesis", level);
         return;
     }
 
@@ -276,11 +327,15 @@ const App: React.FC = () => {
         const [, isCorrect] = text.split(' ');
         const isActuallyCorrect = isCorrect === 'true';
         setSessions(prev => prev.map(s => {
-            if (s.id === currentSessionId && s.quizState) {
+            if (s.id === sessId && s.quizState) {
                 const nextIdx = s.quizState.currentQuestionIndex + 1;
                 const newScore = isActuallyCorrect ? s.quizState.score + 1 : s.quizState.score;
                 if (nextIdx >= 5) {
-                    const finalMsg: Message = { id: crypto.randomUUID(), role: 'model', text: `Quiz Complete! 🎉\nYour final score is **${newScore}/5**. Thanks for playing!`, timestamp: Date.now() };
+                    let celebration = "Assessment finalized.";
+                    if (newScore === 5) celebration = `Elite Synthesis! 🎉 You've achieved a perfect score of **5/5**. Your proficiency in **${s.quizState.topic}** is absolute.`;
+                    else if (newScore >= 3) celebration = `Calibration Successful! 🌟 Score: **${newScore}/5**. You have a strong grasp of **${s.quizState.topic}**.`;
+                    else celebration = `Cycle complete. Final score: **${newScore}/5**. Continue studying **${s.quizState.topic}** to improve calibration.`;
+                    const finalMsg: Message = { id: crypto.randomUUID(), role: 'model', text: celebration, timestamp: Date.now() };
                     return { ...s, messages: [...s.messages, finalMsg], quizState: { ...s.quizState, step: 'finished', score: newScore } as any };
                 }
                 return { ...s, quizState: { ...s.quizState, currentQuestionIndex: nextIdx, score: newScore } };
@@ -292,12 +347,10 @@ const App: React.FC = () => {
 
     if (abortControllerRef.current) abortControllerRef.current.abort();
     abortControllerRef.current = new AbortController();
-
     const userMessage: Message = { id: crypto.randomUUID(), role: 'user', text, attachments, timestamp: Date.now() };
-
     setSessions(prev => {
       const updated = prev.map(s => {
-        if (s.id === currentSessionId) {
+        if (s.id === sessId) {
           return { ...s, messages: [...s.messages, userMessage], updatedAt: Date.now(), title: s.messages.length === 0 ? text.slice(0, 50) : s.title };
         }
         return s;
@@ -305,30 +358,28 @@ const App: React.FC = () => {
       return [...updated].sort((a, b) => b.updatedAt - a.updatedAt);
     });
 
-    // PPT State Machine
     if (activeSession?.isPPT && activeSession.pptState?.step !== 'completed') {
       const state = activeSession.pptState!;
       if (state.step === 'topic') {
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, pptState: { ...state, step: 'slides', topic: text } } : s));
-        const modelMsg: Message = { id: crypto.randomUUID(), role: 'model', text: `Got it: **"${text}"**. How many slides should I include?`, timestamp: Date.now() };
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, modelMsg] } : s));
+        setSessions(prev => prev.map(s => s.id === sessId ? { ...s, pptState: { ...state, step: 'slides', topic: text } } : s));
+        const modelMsg: Message = { id: crypto.randomUUID(), role: 'model', text: `Topic locked: **"${text}"**. How many slides shall I architect?`, timestamp: Date.now() };
+        setSessions(prev => prev.map(s => s.id === sessId ? { ...s, messages: [...s.messages, modelMsg] } : s));
       } else if (state.step === 'slides') {
         const slideCount = parseInt(text.replace(/\D/g, '')) || 5;
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, pptState: { ...state, step: 'method', slideCount } } : s));
-        const modelMsg: Message = { id: crypto.randomUUID(), role: 'model', text: `I'll prepare a **${slideCount} slide** presentation. How would you like to provide the content?`, timestamp: Date.now(), isPPTAction: true };
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, modelMsg] } : s));
+        setSessions(prev => prev.map(s => s.id === sessId ? { ...s, pptState: { ...state, step: 'method', slideCount } } : s));
+        const modelMsg: Message = { id: crypto.randomUUID(), role: 'model', text: `Preparing **${slideCount}** slides for **"${state.topic}"**. Select synthesis method:`, timestamp: Date.now(), isPPTAction: true };
+        setSessions(prev => prev.map(s => s.id === sessId ? { ...s, messages: [...s.messages, modelMsg] } : s));
       } else if (state.step === 'input') {
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, pptState: { ...state, step: 'generating' } } : s));
-        startPPTGeneration(state.topic!, state.slideCount!, text);
+        setSessions(prev => prev.map(s => s.id === sessId ? { ...s, pptState: { ...state, step: 'generating' } } : s));
+        startPPTGeneration(state.topic!, state.slideCount!, text, attachments);
       }
       return;
     }
 
-    // Quiz State Machine
     if (activeSession?.isQuiz && activeSession.quizState?.step === 'topic') {
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, quizState: { ...s.quizState!, step: 'difficulty', topic: text } } : s));
-        const modelMsg: Message = { id: crypto.randomUUID(), role: 'model', text: `Topic: **"${text}"**. Select your preferred difficulty level:`, timestamp: Date.now(), isQuizAction: true };
-        setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, modelMsg] } : s));
+        setSessions(prev => prev.map(s => s.id === sessId ? { ...s, quizState: { ...s.quizState!, step: 'difficulty', topic: text } } : s));
+        const modelMsg: Message = { id: crypto.randomUUID(), role: 'model', text: `Calibration Topic: **"${text}"**. Select difficulty:`, timestamp: Date.now(), isQuizAction: true };
+        setSessions(prev => prev.map(s => s.id === sessId ? { ...s, messages: [...s.messages, modelMsg] } : s));
         return;
     }
 
@@ -336,31 +387,63 @@ const App: React.FC = () => {
     try {
       let modelMessage: Message;
       if (options?.imageGen) {
+        if (!hasApiKey) await handleSelectApiKey();
         const imageUrl = await generateImage(text, options.size, options.aspectRatio);
-        modelMessage = { id: crypto.randomUUID(), role: 'model', text: imageUrl ? "Synthesized image successfully." : "Failed to generate image.", attachments: imageUrl ? [{ type: 'image', url: imageUrl, mimeType: 'image/png' }] : [], timestamp: Date.now() };
+        modelMessage = { 
+          id: crypto.randomUUID(), 
+          role: 'model', 
+          text: imageUrl ? "Visual synthesis complete. High-fidelity asset is ready." : "Synthesis failed. Refine parameters.", 
+          attachments: imageUrl ? [{ type: 'image', url: imageUrl, mimeType: 'image/png', name: 'Lyra_Asset.png' }] : [], 
+          timestamp: Date.now(),
+        };
       } else {
         const mapsKeywords = ['where', 'location', 'nearby', 'address', 'directions', 'place', 'restaurant', 'shop', 'near me'];
         const isMapsQuery = mapsKeywords.some(keyword => text.toLowerCase().includes(keyword));
-        const history = activeSession.messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-        const response = await generateTextChat(text, history, attachments, undefined, isMapsQuery ? 'maps' : 'search');
+        const history = activeSession?.messages.map(m => ({ role: m.role, parts: [{ text: m.text }] })) || [];
+        const hasImages = attachments.some(a => a.type === 'image');
+        const hasDocs = attachments.some(a => a.mimeType === 'application/pdf' || a.mimeType.includes('text/plain'));
+        const hasAudio = attachments.some(a => a.type === 'audio');
+        const complexity = (hasImages || hasDocs || hasAudio) ? 'pro' : (text.length < 30 ? 'lite' : 'normal');
+        const response = await generateTextChat(text, history, attachments, undefined, isMapsQuery ? 'maps' : 'search', complexity);
         if (abortControllerRef.current?.signal.aborted) return;
         const groundingUrls: GroundingSource[] = [];
         const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
         if (chunks) {
           chunks.forEach((chunk: any) => {
             if (chunk.web) groundingUrls.push({ title: chunk.web.title || 'Source', uri: chunk.web.uri });
-            else if (chunk.maps) groundingUrls.push({ title: chunk.maps.title || 'Map Location', uri: chunk.maps.uri });
+            else if (chunk.maps) groundingUrls.push({ title: chunk.maps.title || 'Location', uri: chunk.maps.uri });
           });
         }
-        modelMessage = { id: crypto.randomUUID(), role: 'model', text: response.text || "I've processed your request.", timestamp: Date.now(), groundingUrls: groundingUrls.length > 0 ? groundingUrls : undefined, hasMoreInfo: true };
+        modelMessage = { id: crypto.randomUUID(), role: 'model', text: response.text || "Processed.", timestamp: Date.now(), groundingUrls: groundingUrls.length > 0 ? groundingUrls : undefined, hasMoreInfo: true };
       }
-      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, modelMessage], updatedAt: Date.now() } : s));
+      setSessions(prev => prev.map(s => s.id === sessId ? { ...s, messages: [...s.messages, modelMessage], updatedAt: Date.now() } : s));
     } catch (error: any) {
-      setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, messages: [...s.messages, { id: crypto.randomUUID(), role: 'model', text: error.message || "An error occurred.", timestamp: Date.now() } as Message] } : s));
+      if (error.message === 'KEY_RESET_REQUIRED') {
+        setHasApiKey(false);
+        await handleSelectApiKey();
+        return;
+      }
+      setSessions(prev => prev.map(s => s.id === sessId ? { ...s, messages: [...s.messages, { id: crypto.randomUUID(), role: 'model', text: `Technical Alert: ${error.message}`, timestamp: Date.now() } as Message] } : s));
     } finally {
       setIsLoading(false);
       abortControllerRef.current = null;
     }
+  };
+
+  const handleVoiceTurnComplete = (userInput: string, modelOutput: string) => {
+    const newSessId = currentSessionId || crypto.randomUUID();
+    const userMsg: Message = { id: crypto.randomUUID(), role: 'user', text: userInput, timestamp: Date.now() };
+    const modelMsg: Message = { id: crypto.randomUUID(), role: 'model', text: modelOutput, timestamp: Date.now() };
+    setSessions(prev => {
+      const exists = prev.find(s => s.id === newSessId);
+      if (exists) {
+        return prev.map(s => s.id === newSessId ? { ...s, messages: [...s.messages, userMsg, modelMsg], updatedAt: Date.now() } : s);
+      } else {
+        const newSession: ChatSession = { id: newSessId, title: userInput.slice(0, 50), messages: [userMsg, modelMsg], updatedAt: Date.now() };
+        return [newSession, ...prev];
+      }
+    });
+    if (!currentSessionId) setCurrentSessionId(newSessId);
   };
 
   const handleLogin = (name: string, email: string, photo: string) => {
@@ -380,10 +463,7 @@ const App: React.FC = () => {
           ...s,
           messages: s.messages.map(m => {
             if (m.id === messageId) {
-              return {
-                ...m,
-                attachments: m.attachments?.filter(a => a.url !== url)
-              };
+              return { ...m, attachments: m.attachments?.filter(a => a.url !== url) };
             }
             return m;
           })
@@ -393,11 +473,11 @@ const App: React.FC = () => {
     }));
   };
 
-  const createNewSession = (type: 'chat' | 'quiz' | 'ppt' = 'chat') => {
+  const createNewSession = (type: 'chat' | 'quiz' | 'ppt' = 'chat', initialPrompt?: string, initialAttachments: Attachment[] = []) => {
     const newSessionId = crypto.randomUUID();
     const newSession: ChatSession = {
       id: newSessionId,
-      title: type === 'quiz' ? 'New Quiz' : type === 'ppt' ? 'New PPT' : 'New LYRA',
+      title: type === 'quiz' ? 'Academic Calibration' : type === 'ppt' ? 'Gemini Deck' : (initialAttachments.length > 0 ? `Analysis: ${initialAttachments[0].name || 'Asset'}` : 'New LYRA Session'),
       messages: [],
       updatedAt: Date.now(),
       isQuiz: type === 'quiz',
@@ -409,22 +489,85 @@ const App: React.FC = () => {
     setCurrentSessionId(newSessionId);
     setCurrentView('chat');
     setIsSidebarOpen(false);
+
+    if (initialAttachments.length > 0) {
+      const isImage = initialAttachments.some(a => a.type === 'image');
+      const isDoc = initialAttachments.some(a => a.mimeType === 'application/pdf' || a.mimeType.includes('text/plain'));
+      const isAudio = initialAttachments.some(a => a.type === 'audio');
+
+      if (isImage) {
+        const modelIntro: Message = { id: crypto.randomUUID(), role: 'model', text: `Visual intake complete: **${initialAttachments[0].name || 'Media'}**. How shall I proceed?`, timestamp: Date.now(), attachments: initialAttachments, isImageAction: true };
+        setSessions(prev => prev.map(s => s.id === newSessionId ? { ...s, messages: [modelIntro] } : s));
+      } else if (isDoc) {
+        const modelIntro: Message = { id: crypto.randomUUID(), role: 'model', text: `Document intake complete: **${initialAttachments[0].name}**. How shall I process the findings?`, timestamp: Date.now(), attachments: initialAttachments, isDocAction: true };
+        setSessions(prev => prev.map(s => s.id === newSessionId ? { ...s, messages: [modelIntro] } : s));
+      } else if (isAudio) {
+        const modelIntro: Message = { id: crypto.randomUUID(), role: 'model', text: `Audio intake complete: **${initialAttachments[0].name}**. Should I transcribe, summarize, or perform detailed acoustic analysis?`, timestamp: Date.now(), attachments: initialAttachments };
+        setSessions(prev => prev.map(s => s.id === newSessionId ? { ...s, messages: [modelIntro] } : s));
+      } else {
+        const modelIntro: Message = { id: crypto.randomUUID(), role: 'model', text: "Assets received. How shall I process the intake?", timestamp: Date.now(), attachments: initialAttachments };
+        setSessions(prev => prev.map(s => s.id === newSessionId ? { ...s, messages: [modelIntro] } : s));
+      }
+    } else if (initialPrompt && type === 'chat') {
+        setTimeout(() => {
+          handleSendMessage(initialPrompt, [], false, undefined, newSessionId);
+        }, 100);
+    }
+  };
+
+  const handleStartNewChatWithPrompt = (prompt: string) => createNewSession('chat', prompt);
+
+  const handleCameraCapture = (base64: string) => {
+    const attachment: Attachment = {
+      type: 'image',
+      url: `data:image/jpeg;base64,${base64}`,
+      mimeType: 'image/jpeg',
+      data: base64,
+      name: `Vision_Core_${new Date().getTime()}.jpg`
+    };
+    createNewSession('chat', undefined, [attachment]);
+  };
+
+  const handleUploadAndAnalyze = (attachment: Attachment) => {
+    if (activeSession?.isPPT && activeSession.pptState?.step === 'input' && activeSession.pptState?.method === 'import') {
+      handleSendMessage(`Context blueprint received: **${attachment.name}**. Designing deck...`, [attachment]);
+    } else {
+      createNewSession('chat', undefined, [attachment]);
+    }
   };
 
   return (
-    <div className="flex h-screen bg-[#0a0c10] overflow-hidden font-sans text-slate-200">
-      <div className={`fixed inset-y-0 left-0 z-40 w-80 transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 lg:static lg:translate-x-0`}>
-        <Sidebar sessions={sessions} activeSessionId={currentSessionId} onSelectSession={(id) => { setCurrentSessionId(id); setCurrentView('chat'); setIsSidebarOpen(false); }} onDeleteSession={handleDeleteSession} onRenameSession={handleRenameSession} onNewChat={createNewSession} onClose={() => setIsSidebarOpen(false)} onOpenLibrary={() => { setLibraryInitialTab('Images'); setCurrentView('library'); setIsSidebarOpen(false); }} />
+    <div className="flex h-screen bg-[#0a0c10] overflow-hidden font-sans text-slate-200 safe-area-inset">
+      {/* Overlay for mobile sidebar */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[35] lg:hidden transition-opacity"
+          onClick={() => setIsSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+      
+      <div className={`fixed inset-y-0 left-0 z-40 w-72 sm:w-80 transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 ease-in-out lg:static lg:translate-x-0 shadow-2xl lg:shadow-none`}>
+        <Sidebar 
+          sessions={sessions} 
+          activeSessionId={currentSessionId} 
+          onSelectSession={(id) => { setCurrentSessionId(id); setCurrentView('chat'); setIsSidebarOpen(false); }} 
+          onDeleteSession={handleDeleteSession} 
+          onRenameSession={handleRenameSession} 
+          onNewChat={createNewSession} 
+          onClose={() => setIsSidebarOpen(false)} 
+          onOpenLibrary={() => { setLibraryInitialTab('Images'); setCurrentView('library'); setIsSidebarOpen(false); }} 
+        />
       </div>
 
-      <main className="flex-1 flex flex-col relative w-full overflow-hidden">
+      <main className="flex-1 flex flex-col relative w-full overflow-hidden" role="main">
         {currentView === 'chat' ? (
           <ChatInterface 
             sessions={sessions}
             messages={activeSession?.messages || []} 
             sessionId={currentSessionId}
             onSendMessage={handleSendMessage}
-            onMoreInfo={(p) => handleSendMessage(`Elaborate more on: ${p}`, [], true)}
+            onMoreInfo={(p) => handleSendMessage(`Deep dive: ${p}`, [], true)}
             onStop={handleStop}
             isLoading={isLoading}
             onToggleVoice={() => setIsVoiceMode(true)}
@@ -436,7 +579,8 @@ const App: React.FC = () => {
             onStartPPT={() => createNewSession('ppt')}
             onStartImageGen={() => {}} 
             onOpenCamera={() => setIsCameraMode(true)}
-            onUploadAndAnalyze={() => createNewSession('chat')}
+            onUploadAndAnalyze={handleUploadAndAnalyze}
+            onStartNewChatWithPrompt={handleStartNewChatWithPrompt}
             initialInput={queuedInputText}
             onClearInitialInput={() => setQueuedInputText(null)}
             user={user}
@@ -445,12 +589,12 @@ const App: React.FC = () => {
             onPPTFullScreen={(data) => setFullScreenPPT({ data, slideIndex: 0 })}
           />
         ) : (
-          // Fix: Added missing onSelectSession prop to LibraryView to allow switching sessions from library view
           <LibraryView 
             sessions={sessions} 
             initialTab={libraryInitialTab} 
             onBack={() => setCurrentView('chat')} 
             onDeleteImage={handleDeleteImage} 
+            onDeleteSession={handleDeleteSession}
             onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)} 
             onNewChat={() => createNewSession('chat')} 
             onSelectSession={(id) => { setCurrentSessionId(id); setCurrentView('chat'); }}
@@ -458,77 +602,75 @@ const App: React.FC = () => {
         )}
         
         {fullScreenPPT && (
-          <div className="fixed inset-0 z-[200] bg-black flex flex-col animate-in fade-in duration-300">
-             <header className="h-16 flex items-center justify-between px-6 bg-white/5 border-b border-white/10 backdrop-blur-md">
+          <div className="fixed inset-0 z-[200] bg-black flex flex-col animate-in fade-in duration-300" role="dialog" aria-label="PPT Presenter">
+             <header className="h-16 flex items-center justify-between px-4 sm:px-6 bg-white/5 border-b border-white/10 backdrop-blur-md">
                 <div className="flex flex-col">
-                    <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Presenter Mode</span>
-                    <h2 className="text-sm font-bold text-white truncate max-w-[200px]">{fullScreenPPT.data.theme}</h2>
+                    <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Presenter v4.0</span>
+                    <h2 className="text-sm font-bold text-white truncate max-w-[150px] sm:max-w-[300px]">{fullScreenPPT.data.theme}</h2>
                 </div>
-                <div className="flex gap-2">
-                    <button onClick={() => setFullScreenPPT(null)} className="p-2 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-lg transition-all border border-red-500/20">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                    </button>
-                </div>
+                <button onClick={() => setFullScreenPPT(null)} className="p-2 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-lg transition-all border border-red-500/20" aria-label="Close Presenter">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
              </header>
 
-             <div className="flex-1 flex items-center justify-center p-4 md:p-10 relative group">
-                {/* Navigation Arrows */}
+             <div className="flex-1 flex items-center justify-center p-4 relative group">
                 <button 
                   onClick={() => setFullScreenPPT({ ...fullScreenPPT, slideIndex: Math.max(0, fullScreenPPT.slideIndex - 1) })}
-                  className="absolute left-4 md:left-8 z-10 w-12 h-12 md:w-16 md:h-16 bg-white/5 hover:bg-white/10 text-white rounded-full flex items-center justify-center border border-white/10 backdrop-blur-xl opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-0"
+                  className="absolute left-2 sm:left-4 z-10 w-10 sm:w-12 h-10 sm:h-12 bg-white/10 rounded-full flex items-center justify-center border border-white/10 opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity disabled:opacity-0"
                   disabled={fullScreenPPT.slideIndex === 0}
+                  aria-label="Previous Slide"
                 >
-                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m15 18-6-6 6-6"/></svg>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m15 18-6-6 6-6"/></svg>
                 </button>
 
-                <div className="w-full h-full max-w-6xl aspect-video bg-[#0f1118] border border-white/10 rounded-2xl md:rounded-[3rem] shadow-2xl overflow-hidden relative">
-                    <div className="w-full h-full flex flex-col md:flex-row">
-                        {(() => {
-                           const slide = fullScreenPPT.data.slides[fullScreenPPT.slideIndex];
-                           if (!slide) return null;
-                           return (
-                                <>
-                                    <div className="flex-1 p-6 md:p-16 flex flex-col justify-center gap-4 md:gap-8 overflow-y-auto">
-                                        <h2 className="text-3xl md:text-6xl font-black text-white leading-tight">{slide.title}</h2>
-                                        {slide.subtitle && <p className="text-lg md:text-2xl text-white/50">{slide.subtitle}</p>}
-                                        <div className="h-1 w-16 md:w-24 bg-blue-500 rounded-full" />
-                                        <ul className="space-y-2 md:space-y-4">
-                                            {slide.content.map((item, i) => (
-                                                <li key={i} className="text-base md:text-xl text-white/70 flex gap-3">
-                                                    <span className="text-blue-500 mt-1">▹</span> {item}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                    {slide.imageUrl && (
-                                        <div className="w-full md:w-1/2 h-40 md:h-auto relative shrink-0">
-                                            <img src={slide.imageUrl} className="w-full h-full object-cover" alt="" />
-                                            <div className="absolute inset-0 bg-gradient-to-t from-[#0f1118] via-transparent md:bg-gradient-to-r md:from-[#0f1118] md:to-transparent" />
-                                        </div>
-                                    )}
-                                </>
-                           );
-                        })()}
-                    </div>
+                <div className="w-full h-full max-w-6xl aspect-video bg-[#0f1118] border border-white/10 rounded-xl sm:rounded-2xl shadow-2xl overflow-hidden relative">
+                    {(() => {
+                        const slide = fullScreenPPT.data.slides[fullScreenPPT.slideIndex];
+                        if (!slide) return null;
+                        return (
+                            <div className="w-full h-full flex flex-col md:flex-row overflow-y-auto md:overflow-hidden">
+                                <div className="flex-1 p-6 sm:p-10 md:p-16 flex flex-col justify-center gap-4 sm:gap-8 overflow-y-auto">
+                                    <h2 className="text-2xl sm:text-3xl md:text-5xl font-black text-white">{slide.title}</h2>
+                                    {slide.subtitle && <p className="text-lg sm:text-xl text-white/50">{slide.subtitle}</p>}
+                                    <ul className="space-y-3 sm:space-y-4">
+                                        {slide.content.map((item, i) => (
+                                          <li key={i} className="text-base sm:text-lg md:text-xl text-white/70 flex gap-3 sm:gap-4">
+                                            <span className="text-blue-500 mt-1 shrink-0">
+                                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                                            </span> 
+                                            {item}
+                                          </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                                {slide.imageUrl && <img src={slide.imageUrl} className="w-full md:w-1/2 h-48 sm:h-64 md:h-auto object-cover border-t md:border-t-0 md:border-l border-white/5" alt="" />}
+                            </div>
+                        );
+                    })()}
                 </div>
 
                 <button 
                   onClick={() => setFullScreenPPT({ ...fullScreenPPT, slideIndex: Math.min(fullScreenPPT.data.slides.length - 1, fullScreenPPT.slideIndex + 1) })}
-                  className="absolute right-4 md:right-8 z-10 w-12 h-12 md:w-16 md:h-16 bg-white/5 hover:bg-white/10 text-white rounded-full flex items-center justify-center border border-white/10 backdrop-blur-xl opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-0"
+                  className="absolute right-2 sm:right-4 z-10 w-10 sm:w-12 h-10 sm:h-12 bg-white/10 rounded-full flex items-center justify-center border border-white/10 opacity-60 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity disabled:opacity-0"
                   disabled={fullScreenPPT.slideIndex === fullScreenPPT.data.slides.length - 1}
+                  aria-label="Next Slide"
                 >
-                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m9 18 6-6-6-6"/></svg>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m9 18 6-6-6-6"/></svg>
                 </button>
              </div>
-
-             <footer className="h-12 flex items-center justify-center bg-white/5 border-t border-white/10">
-                <p className="text-white/40 font-bold uppercase text-[9px] tracking-widest">Slide {fullScreenPPT.slideIndex + 1} / {fullScreenPPT.data.slides.length}</p>
+             <footer className="h-12 flex items-center justify-center bg-white/5 border-t border-white/5 relative">
+                <div className="flex gap-2">
+                   {fullScreenPPT.data.slides.map((_, i) => (
+                      <div key={i} className={`h-1 sm:h-1.5 rounded-full transition-all ${i === fullScreenPPT.slideIndex ? 'w-6 sm:w-8 bg-blue-500' : 'w-1 sm:w-2 bg-white/10'}`} />
+                   ))}
+                </div>
+                <p className="absolute right-4 sm:right-6 text-[10px] text-white/40 tracking-widest uppercase font-bold">Slide {fullScreenPPT.slideIndex + 1} / {fullScreenPPT.data.slides.length}</p>
              </footer>
           </div>
         )}
 
-        {isVoiceMode && <VoiceOverlay onClose={() => setIsVoiceMode(false)} />}
-        {isCameraMode && <CameraCapture onCapture={() => createNewSession('chat')} onClose={() => setIsCameraMode(false)} />}
+        {isVoiceMode && <VoiceOverlay onClose={() => setIsVoiceMode(false)} onTurnComplete={handleVoiceTurnComplete} />}
+        {isCameraMode && <CameraCapture onCapture={handleCameraCapture} onClose={() => setIsCameraMode(false)} />}
         <GoogleLoginModal isOpen={isLoginModalOpen} onClose={() => setIsLoginModalOpen(false)} onLogin={handleLogin} />
       </main>
     </div>

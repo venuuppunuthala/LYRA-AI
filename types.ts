@@ -8,6 +8,8 @@ export interface Message {
   isThinking?: boolean;
   isQuizAction?: boolean; // For difficulty buttons
   isPPTAction?: boolean; // For Generate/Paste/Import buttons
+  isDocAction?: boolean; // For Document analysis buttons
+  isImageAction?: boolean; // For Image analysis buttons
   pptData?: PPTData;
   quizQuestions?: QuizQuestion[]; // For the current batch of MCQ
   hasMoreInfo?: boolean; 
@@ -33,10 +35,11 @@ export interface PPTSlide {
   content: string[];
   imageUrl?: string;
   accentColor?: string;
+  imagePrompt?: string;
 }
 
 export interface Attachment {
-  type: 'image' | 'audio' | 'video' | 'file' | 'ppt';
+  type: 'image' | 'audio' | 'video' | 'file' | 'ppt' | 'document';
   url: string;
   mimeType: string;
   data?: string; // Base64
