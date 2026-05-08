@@ -1,10 +1,11 @@
 
 import React, { useState } from 'react';
-import { Message, Attachment, PPTData, ChatSession, QuizQuestion } from '../types';
+import Markdown from 'react-markdown';
+import { Message, Attachment, PPTData, ChatSession, QuizQuestion, ScanAnalysis } from '../types';
 
 interface MessageBubbleProps {
   message: Message;
-  onSendMessage?: (text: string, attachments: Attachment[]) => void;
+  onSendMessage?: (text: string, attachments: Attachment[], moreInfo?: boolean, options?: any) => void;
   onMoreInfo?: () => void;
   activeSession?: ChatSession;
   onPPTFullScreen?: (data: PPTData) => void;
@@ -17,7 +18,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSendMessage, o
   const [quizSelection, setQuizSelection] = useState<number | null>(null);
 
   const handleDownload = (url: string, filename: string = 'lyra_asset.png') => {
-    if (!url || url === '#') return alert("Invalid synthesis link.");
+    if (!url || url === '#') return;
     const link = document.createElement('a');
     link.href = url; link.download = filename;
     document.body.appendChild(link); link.click();
@@ -30,7 +31,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSendMessage, o
         const pptAtt = message.attachments.find(a => a.type === 'ppt' || a.mimeType.includes('presentation'));
         if (pptAtt) return handleDownload(pptAtt.url, pptAtt.name);
      }
-     alert(`Exporting ${format} via Gemini Synthesis...`);
   };
 
   const handleQuizChoice = (idx: number, q: QuizQuestion) => {
@@ -44,7 +44,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSendMessage, o
   };
 
   const currentQuizQuestion = (isModel && message.quizQuestions && activeSession?.quizState?.step === 'ongoing') 
-    ? message.quizQuestions[activeSession.quizState.currentQuestionIndex] 
+    ? message.quizQuestions[activeSession?.quizState?.currentQuestionIndex ?? 0] 
     : null;
 
   const showQuizQuitButton = activeSession?.isQuiz && activeSession?.quizState?.step !== 'finished';
@@ -132,10 +132,10 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSendMessage, o
               <div className="mb-6 space-y-4 sm:space-y-6 w-full animate-in fade-in slide-in-from-bottom-6 duration-500">
                 <div className="flex flex-col gap-3">
                   <div className="flex justify-between items-center bg-white/5 border border-white/10 px-5 py-3 sm:py-4 rounded-2xl sm:rounded-[2rem]">
-                      <div className="flex flex-col"><span className="text-[8px] sm:text-[10px] font-black text-blue-500 tracking-[0.2em] uppercase">Assessment Phase {activeSession?.quizState!.currentQuestionIndex + 1}/5</span><span className="text-sm sm:text-lg font-black text-white">Dynamic Calibration</span></div>
-                      <div className="flex flex-col items-end"><div className="px-3 py-1 bg-blue-500/20 rounded-xl border border-blue-500/30"><span className="text-[10px] font-black text-blue-400">{activeSession?.quizState!.score} pts</span></div></div>
+                      <div className="flex flex-col"><span className="text-[8px] sm:text-[10px] font-black text-blue-500 tracking-[0.2em] uppercase">Assessment Phase {(activeSession?.quizState?.currentQuestionIndex ?? 0) + 1}/5</span><span className="text-sm sm:text-lg font-black text-white">Dynamic Calibration</span></div>
+                      <div className="flex flex-col items-end"><div className="px-3 py-1 bg-blue-500/20 rounded-xl border border-blue-500/30"><span className="text-[10px] font-black text-blue-400">{activeSession?.quizState?.score ?? 0} pts</span></div></div>
                   </div>
-                  <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden"><div className="h-full bg-blue-500 transition-all duration-700" style={{ width: `${((activeSession?.quizState!.currentQuestionIndex + 1) / 5) * 100}%` }} /></div>
+                  <div className="h-1 w-full bg-white/5 rounded-full overflow-hidden"><div className="h-full bg-blue-500 transition-all duration-700" style={{ width: `${(((activeSession?.quizState?.currentQuestionIndex ?? 0) + 1) / 5) * 100}%` }} /></div>
                 </div>
                 <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-white leading-tight px-1">{currentQuizQuestion.question}</h3>
                 <div className="grid grid-cols-1 gap-3">
@@ -169,33 +169,84 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onSendMessage, o
               </div>
           )}
 
-          {!currentQuizQuestion && <div className="whitespace-pre-wrap leading-relaxed text-[15px] sm:text-[17px] md:text-[18px] font-medium" dangerouslySetInnerHTML={{ __html: message.text.replace(/\*\*(.*?)\*\*/g, '<b class="text-blue-400">$1</b>') }} />}
+          {!currentQuizQuestion && (
+            <div className="markdown-body whitespace-pre-wrap leading-relaxed text-[15px] sm:text-[17px] md:text-[18px] font-medium prose prose-invert max-w-none">
+              <Markdown>{message.text}</Markdown>
+            </div>
+          )}
 
           {/* Interactive Steps */}
-          {isModel && (message.isPPTAction || message.isQuizAction || message.isDocAction || message.isImageAction) && (
+          {isModel && (message.isPPTAction || message.isQuizAction || message.isDocAction || message.isImageAction || message.isScanAction) && (
             <div className={`mt-6 sm:mt-8 flex flex-wrap gap-3 sm:gap-4 ${!isModel && 'items-end'}`}>
                {message.isPPTAction ? (
-                 <>
+                 <div className="flex flex-wrap gap-3">
                    <button onClick={() => onSendMessage?.('/ppt-method generate', [])} className="px-6 sm:px-8 py-3.5 sm:py-4 bg-orange-600 hover:bg-orange-500 text-white text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl flex items-center gap-2 sm:gap-3 shadow-xl transition-all active:scale-95 border border-white/10"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m13 2-2 20M17 12H7M18 5l-6-3-6 3M18 19l-6 3-6-3"/></svg>Generate</button>
                    <button onClick={() => onSendMessage?.('/ppt-method paste', [])} className="px-6 sm:px-8 py-3.5 sm:py-4 bg-white/5 hover:bg-white/10 text-white/80 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl active:scale-95 border border-white/5 transition-all">Paste Text</button>
                    <button onClick={() => onSendMessage?.('/ppt-method import', [])} className="px-6 sm:px-8 py-3.5 sm:py-4 bg-white/5 hover:bg-white/10 text-white/80 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl active:scale-95 border border-white/5 transition-all">Import PDF</button>
-                 </>
+                   <button onClick={() => onSendMessage?.('/ppt-cancel', [])} className="px-6 sm:px-8 py-3.5 sm:py-4 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl active:scale-95 border border-red-500/20 transition-all flex items-center gap-2">
+                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                     Cancel
+                   </button>
+                 </div>
                ) : message.isQuizAction ? (
                  <div className="flex flex-wrap gap-3">
-                    {activeSession?.quizState?.step === 'difficulty' ? ['Easy', 'Medium', 'Advanced'].map(lvl => (
-                      <button key={lvl} onClick={() => onSendMessage?.(`/quiz-level ${lvl}`, [])} className={`px-6 sm:px-10 py-3.5 sm:py-5 ${lvl === 'Advanced' ? 'bg-indigo-600 shadow-indigo-600/30' : 'bg-white/5 border-white/10'} text-white text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl sm:rounded-[2rem] border transition-all active:scale-95 shadow-xl`}>{lvl}</button>
-                    )) : null}
+                    {activeSession?.quizState?.step === 'difficulty' ? (
+                      <>
+                        {['Easy', 'Medium', 'Advanced'].map(lvl => (
+                          <button key={lvl} onClick={() => onSendMessage?.(`/quiz-level ${lvl}`, [])} className={`px-6 sm:px-10 py-3.5 sm:py-5 ${lvl === 'Advanced' ? 'bg-indigo-600 shadow-indigo-600/30' : 'bg-white/5 border-white/10'} text-white text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl sm:rounded-[2rem] border transition-all active:scale-95 shadow-xl`}>{lvl}</button>
+                        ))}
+                        <button onClick={() => onSendMessage?.('/quiz-cancel', [])} className="px-6 sm:px-10 py-3.5 sm:py-5 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl sm:rounded-[2rem] border border-red-500/20 transition-all active:scale-95 flex items-center gap-2">
+                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                           Cancel
+                        </button>
+                      </>
+                    ) : null}
                  </div>
                ) : message.isDocAction ? (
-                 <>
+                 <div className="flex flex-wrap gap-3">
                    <button onClick={() => onSendMessage?.('Provide a structured executive summary of this document.', [])} className="px-5 sm:px-6 py-3 sm:py-3.5 bg-indigo-600 text-white text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-xl active:scale-95 shadow-lg">Summarize</button>
                    <button onClick={() => onSendMessage?.('Extract key data points from this document.', [])} className="px-5 sm:px-6 py-3 sm:py-3.5 bg-white/5 border border-indigo-500/20 text-indigo-400 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-xl active:scale-95 transition-all">Extract</button>
-                 </>
-               ) : message.isImageAction ? (
-                <>
-                   <button onClick={() => onSendMessage?.('Provide a detailed visual synthesis of this image.', [])} className="px-5 sm:px-6 py-3 sm:py-3.5 bg-blue-600 text-white text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-xl active:scale-95 shadow-lg">Analyze</button>
-                   <button onClick={() => onSendMessage?.('Identify objects and text in this image.', [])} className="px-5 sm:px-6 py-3 sm:py-3.5 bg-white/5 border border-blue-500/20 text-blue-400 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-xl active:scale-95 transition-all">Identify</button>
-                 </>
+                   <button onClick={() => onSendMessage?.('/doc-cancel', [])} className="px-5 sm:px-6 py-3 sm:py-3.5 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-xl active:scale-95 transition-all border border-red-500/20 flex items-center gap-2">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      Cancel
+                   </button>
+                 </div>
+                ) : message.isImageAction ? (
+                 <div className="flex flex-wrap gap-3">
+                   <button 
+                     onClick={() => onSendMessage?.('Perform a comprehensive analysis of this image and provide detailed information about its content.', [], false, { scanAnalysis: true })} 
+                     className="px-6 sm:px-8 py-3.5 sm:py-4 bg-blue-600 hover:bg-blue-500 text-white text-[10px] sm:text-[11px] font-black uppercase tracking-[0.2em] rounded-2xl active:scale-95 shadow-xl flex items-center gap-2.5 transition-all border border-white/10"
+                   >
+                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M21 12c-1.889 2.991-4.674 6-9 6s-7.111-3.009-9-6c1.889-2.991 4.674-6 9-6s7.111 3.009 9 6Z"/></svg>
+                     Analysis
+                   </button>
+                   <button 
+                     onClick={() => onSendMessage?.('Extract all key data points, text, and structured information from this image.', [], false, { scanAnalysis: true })} 
+                     className="px-6 sm:px-8 py-3.5 sm:py-4 bg-white/5 border border-blue-500/20 text-blue-400 hover:bg-blue-500/10 text-[10px] sm:text-[11px] font-black uppercase tracking-[0.2em] rounded-2xl active:scale-95 transition-all flex items-center gap-2.5"
+                   >
+                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                     Extract
+                   </button>
+                 </div>
+               ) : message.isScanAction && message.scanAnalysis ? (
+                 <div className="flex flex-wrap gap-3">
+                   {message.scanAnalysis.actionSuggestions.map((suggestion, i) => (
+                     <button 
+                       key={i} 
+                       onClick={() => onSendMessage?.(suggestion, [])} 
+                       className="px-5 sm:px-6 py-3 sm:py-3.5 bg-blue-600 hover:bg-blue-500 text-white text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-xl active:scale-95 shadow-lg transition-all"
+                     >
+                       {suggestion}
+                     </button>
+                   ))}
+                   <button 
+                     onClick={() => onSendMessage?.('/scan-cancel', [])} 
+                     className="px-5 sm:px-6 py-3 sm:py-3.5 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white text-[9px] sm:text-[10px] font-black uppercase tracking-[0.2em] rounded-xl active:scale-95 transition-all border border-red-500/20 flex items-center gap-2"
+                   >
+                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                     Dismiss
+                   </button>
+                 </div>
                ) : null}
             </div>
           )}

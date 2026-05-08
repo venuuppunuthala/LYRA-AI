@@ -32,6 +32,10 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose }) => 
     try {
       stopCamera();
 
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Camera access is not supported by your browser or is blocked by security settings.");
+      }
+
       const constraints: MediaStreamConstraints = {
         video: { 
           facingMode: mode, 
@@ -41,7 +45,15 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose }) => 
         audio: false
       };
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (innerErr) {
+        console.warn("Retrying with simpler constraints...");
+        // Fallback to simplest constraints if ideal ones fail
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+
       streamRef.current = stream;
       
       // We set isInitializing to false first to ensure the video element is rendered
@@ -55,21 +67,25 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose }) => 
             videoRef.current?.play().catch(e => console.error("Play failed", e));
           };
         }
-      }, 50);
+      }, 100);
 
     } catch (err: any) {
       console.error("Camera access failed:", err);
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        setError("Camera permission denied. Please enable access in your browser settings.");
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' || err.message?.toLowerCase().includes('permission denied')) {
+        setError("Camera permission denied. This often happens in embedded previews. Please ensure you have granted camera access in your browser settings. If the problem persists, try opening the application in a new tab.");
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        setError("No camera found on this device.");
       } else {
-        setError(`Could not access camera: ${err.message}`);
+        setError(`Could not access camera: ${err.message || "Unknown error"}`);
       }
       setIsInitializing(false);
     }
   };
 
   useEffect(() => {
-    startCamera(facingMode);
+    startCamera(facingMode).catch(err => {
+      console.error("Initial camera start failed:", err);
+    });
     return () => {
       stopCamera();
     };
@@ -83,7 +99,9 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose }) => 
   const switchCamera = () => {
     const nextMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(nextMode);
-    startCamera(nextMode);
+    startCamera(nextMode).catch(err => {
+      console.error("Camera switch failed:", err);
+    });
   };
 
   const takePhoto = () => {
@@ -102,7 +120,7 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose }) => 
           ctx.scale(-1, 1);
         }
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+        const dataUrl = canvas.toDataURL('image/jpeg', 1.0);
         setCapturedImage(dataUrl);
         stopCamera();
       }
@@ -119,7 +137,9 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose }) => 
 
   const retake = () => {
     setCapturedImage(null);
-    startCamera(facingMode);
+    startCamera(facingMode).catch(err => {
+      console.error("Retake camera start failed:", err);
+    });
   };
 
   return (
@@ -168,7 +188,15 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose }) => 
               </div>
               <h3 className="text-white text-xl font-bold mb-4">Camera Error</h3>
               <p className="text-white/50 mb-8 leading-relaxed text-sm">{error}</p>
-              <button onClick={() => startCamera(facingMode)} className="px-8 py-3 bg-white text-black rounded-full font-bold transition-all active:scale-95">Retry</button>
+              <div className="flex flex-col gap-3">
+                <button onClick={() => startCamera(facingMode)} className="px-8 py-3 bg-white text-black rounded-full font-bold transition-all active:scale-95">Retry</button>
+                <button 
+                  onClick={() => window.open(window.location.href, '_blank')}
+                  className="px-8 py-3 bg-white/10 text-white rounded-full font-bold transition-all active:scale-95 border border-white/20"
+                >
+                  Open in New Tab
+                </button>
+              </div>
             </div>
           ) : capturedImage ? (
             <div className="w-full h-full relative animate-in fade-in duration-500">
@@ -216,7 +244,7 @@ const CameraCapture: React.FC<CameraCaptureProps> = ({ onCapture, onClose }) => 
                 onClick={confirmCapture} 
                 className="px-12 py-4 bg-blue-600 hover:bg-blue-500 text-white font-black rounded-full transition-all active:scale-95 shadow-xl uppercase tracking-[0.2em] text-sm"
               >
-                Analyze
+                Synthesize Scan
               </button>
             </div>
           ) : (

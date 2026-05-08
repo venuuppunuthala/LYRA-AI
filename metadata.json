@@ -1,9 +1,10 @@
 {
-  "name": "LYRA Ai",
-  "description": "A world-class multi-modal AI assistant powered by Gemini technology, featuring a minimalist home interface and powerful generation capabilities.",
+  "name": "LYRA AI",
+  "description": "A world-class multi-modal AI Powered Personal Assistant for Adaptive Education.",
   "requestFramePermissions": [
     "camera",
     "microphone",
     "geolocation"
-  ]
+  ],
+  "majorCapabilities": []
 }

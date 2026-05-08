@@ -6,13 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "lint": "tsc --noEmit",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@google/genai": "^1.38.0",
+    "@tailwindcss/vite": "^4.2.2",
+    "buffer": "^6.0.3",
+    "lucide-react": "^0.475.0",
+    "pptxgenjs": "3.12.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
-    "@google/genai": "^1.38.0",
-    "pptxgenjs": "3.12.0"
+    "react-markdown": "^10.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

@@ -22,7 +22,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const menuRef = useRef<HTMLDivElement>(null);
 
   const filteredSessions = sessions.filter(s => 
-    s.title.toLowerCase().includes(searchQuery.toLowerCase())
+    s.messages.length > 0 && s.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const groups: Record<string, ChatSession[]> = {};
@@ -62,13 +62,13 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const handleRename = () => {
     if (!menuSession) return;
-    const newTitle = prompt("Enter new title:", menuSession.title);
-    if (newTitle) onRenameSession(menuSession.id, newTitle);
+    const newTitle = "Renamed Session"; // Defaulting or could use input if implemented
+    onRenameSession(menuSession.id, newTitle);
     setMenuSession(null);
   };
 
   const handleDelete = () => {
-    if (menuSession && confirm("Delete this conversation?")) {
+    if (menuSession) {
       onDeleteSession(menuSession.id);
       setMenuSession(null);
     }
@@ -78,9 +78,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     if (!menuSession) return;
     try {
       await navigator.clipboard.writeText(`${window.location.origin}/chat/${menuSession.id}`);
-      alert("Share link copied to clipboard!");
     } catch (err) {
-      alert("Failed to copy link.");
+      console.warn("Failed to copy link.");
     }
     setMenuSession(null);
   };
@@ -125,12 +124,6 @@ const Sidebar: React.FC<SidebarProps> = ({
 
       <div className="px-4 sm:px-5 mb-6 space-y-1">
         <div className="px-2 mb-2"><h3 className="text-[10px] font-black text-white/20 uppercase tracking-[0.2em]">TOOLS</h3></div>
-        <button onClick={() => onNewChat('chat')} className="w-full flex items-center gap-4 p-3 hover:bg-white/5 rounded-2xl transition-all group active:bg-white/10">
-          <div className="w-8 h-8 flex items-center justify-center bg-white/5 rounded-xl text-white/40 group-hover:text-white group-hover:bg-white/10 transition-all shrink-0">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          </div>
-          <span className="text-sm font-bold text-white/60 group-hover:text-white truncate">LYRA AI Chat</span>
-        </button>
         <button onClick={onOpenLibrary} className="w-full flex items-center gap-4 p-3 hover:bg-white/5 rounded-2xl transition-all group active:bg-white/10">
           <div className="w-8 h-8 flex items-center justify-center bg-white/5 rounded-xl text-white/40 group-hover:text-white group-hover:bg-white/10 transition-all shrink-0">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect width="12" height="12" x="2" y="10" rx="2" ry="2"></rect><path d="m17.92 14 3.5-3.5a2.24 2.24 0 0 0 0-3l-5-5a2.24 2.24 0 0 0-3 0L10 6"></path></svg>

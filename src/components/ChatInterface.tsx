@@ -22,6 +22,8 @@ interface ChatInterfaceProps {
   onOpenCamera: () => void;
   onUploadAndAnalyze: (attachment: Attachment) => void;
   onStartNewChatWithPrompt: (prompt: string) => void;
+  onDeleteSession: (id: string) => void;
+  onHideOnHome: (id: string) => void;
   initialInput: string | null;
   onClearInitialInput: () => void;
   user: { name: string; email: string; photo: string } | null;
@@ -31,7 +33,7 @@ interface ChatInterfaceProps {
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ 
-  sessions, messages, sessionId, onSendMessage, onMoreInfo, onStop, isLoading, onToggleVoice, onToggleSidebar, onGoHome, onSelectSession, onViewAllHistory, onStartQuiz, onStartPPT, onStartImageGen, onOpenCamera, onUploadAndAnalyze, onStartNewChatWithPrompt, initialInput, onClearInitialInput, user, onLoginClick, onLogout, onPPTFullScreen
+  sessions, messages, sessionId, onSendMessage, onMoreInfo, onStop, isLoading, onToggleVoice, onToggleSidebar, onGoHome, onSelectSession, onViewAllHistory, onStartQuiz, onStartPPT, onStartImageGen, onOpenCamera, onUploadAndAnalyze, onStartNewChatWithPrompt, onDeleteSession, onHideOnHome, initialInput, onClearInitialInput, user, onLoginClick, onLogout, onPPTFullScreen
 }) => {
   const activeSession = sessions.find(s => s.id === sessionId);
   const [inputText, setInputText] = useState('');
@@ -43,8 +45,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [loadingStep, setLoadingStep] = useState(0);
   const [isHistoryVisible, setIsHistoryVisible] = useState(true);
   const [isImageGenActive, setIsImageGenActive] = useState(false);
-  const [imageSize, setImageSize] = useState<'1K' | '2K' | '4K'>('1K');
-  const [aspectRatio, setAspectRatio] = useState<'1:1' | '3:4' | '4:3' | '9:16' | '16:9'>('1:1');
+  const [imageSize, setImageSize] = useState<'512px' | '1K' | '2K' | '4K'>('1K');
+  const [aspectRatio, setAspectRatio] = useState<'1:1' | '3:4' | '4:3' | '9:16' | '16:9' | '1:4' | '1:8' | '4:1' | '8:1'>('1:1');
+  const [imageQuality, setImageQuality] = useState<'standard' | 'high' | 'pro' | 'nano-banana'>('standard');
+  const [useSearch, setUseSearch] = useState(false);
   const [isSTTActive, setIsSTTActive] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -55,6 +59,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const accountMenuRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
+  const isRecognitionStarting = useRef(false);
 
   const MAX_HEIGHT = window.innerHeight * 0.95;
   const DEFAULT_OPEN_HEIGHT = Math.min(640, window.innerHeight * 0.85);
@@ -103,32 +108,66 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'en-US';
-      recognitionRef.current.onresult = (event: any) => {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+      
+      recognition.onstart = () => {
+        setIsSTTActive(true);
+        isRecognitionStarting.current = false;
+      };
+      
+      recognition.onresult = (event: any) => {
         let finalTranscript = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) finalTranscript += event.results[i][0].transcript;
         }
         if (finalTranscript) setInputText(prev => (prev.endsWith(' ') || prev === '' ? prev + finalTranscript : prev + ' ' + finalTranscript));
       };
-      recognitionRef.current.onend = () => setIsSTTActive(false);
-      recognitionRef.current.onerror = () => setIsSTTActive(false);
+      
+      recognition.onend = () => {
+        setIsSTTActive(false);
+        isRecognitionStarting.current = false;
+      };
+      
+      recognition.onerror = (event: any) => {
+        console.warn("Speech Recognition Error", event.error);
+        setIsSTTActive(false);
+        isRecognitionStarting.current = false;
+      };
+
+      recognitionRef.current = recognition;
     }
+
+    return () => {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {}
+      }
+    };
   }, []);
 
   const toggleSTT = () => {
-    if (!recognitionRef.current) return alert("STT not supported.");
+    if (!recognitionRef.current) return;
+    
     if (isSTTActive) {
       recognitionRef.current.stop();
-      setIsSTTActive(false);
     } else {
+      if (isRecognitionStarting.current) return;
       try {
+        isRecognitionStarting.current = true;
         recognitionRef.current.start();
-        setIsSTTActive(true);
-      } catch (err) { console.error(err); }
+      } catch (err: any) {
+        isRecognitionStarting.current = false;
+        if (err.name === 'InvalidStateError') {
+          console.warn("Recognition already started, syncing state.");
+          setIsSTTActive(true);
+        } else {
+          console.error("Speech recognition start failed:", err);
+        }
+      }
     }
   };
 
@@ -137,7 +176,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (!inputText.trim() && attachments.length === 0) return;
     if (isSTTActive) { recognitionRef.current?.stop(); setIsSTTActive(false); }
     if (isImageGenActive) {
-      onSendMessage(inputText, attachments, false, { imageGen: true, size: imageSize, aspectRatio: aspectRatio });
+      onSendMessage(inputText, attachments, false, { imageGen: true, size: imageSize, aspectRatio: aspectRatio, quality: imageQuality, useSearch: useSearch });
       setIsImageGenActive(false);
     } else {
       onSendMessage(inputText, attachments);
@@ -210,7 +249,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   }, [isDragging, handleDragMove, handleDragEnd]);
 
   const isHomePage = messages.length === 0;
-  const recentSessions = sessions.filter(s => s.messages.length > 0).slice(0, 4);
+  const recentSessions = sessions.filter(s => s.messages.length > 0 && !s.isHiddenOnHome).slice(0, 4);
 
   const getSessionDisplayInfo = (s: ChatSession) => {
     if (s.isQuiz) return { icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>, color: 'text-blue-400', bg: 'bg-blue-400/10', label: 'Quiz' };
@@ -288,13 +327,22 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   {recentSessions.map(s => {
                     const info = getSessionDisplayInfo(s);
                     return (
-                      <button key={s.id} onClick={() => onSelectSession(s.id)} className="group flex flex-col items-start gap-4 p-5 sm:p-6 bg-[#1a1c24]/60 backdrop-blur border border-white/10 rounded-[2rem] transition-all hover:bg-[#1a1c24] hover:scale-[1.02] active:scale-95 text-left shadow-lg">
-                        <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl ${info.bg} ${info.color} flex items-center justify-center shrink-0`}>{info.icon}</div>
-                        <div className="space-y-1 w-full overflow-hidden">
-                          <h4 className="text-[14px] sm:text-[15px] font-bold text-white/90 truncate">{s.title}</h4>
-                          <span className="text-[9px] font-black uppercase tracking-widest text-white/20">{info.label}</span>
-                        </div>
-                      </button>
+                      <div key={s.id} className="group relative">
+                        <button onClick={() => onSelectSession(s.id)} className="w-full flex flex-col items-start gap-4 p-5 sm:p-6 bg-[#1a1c24]/60 backdrop-blur border border-white/10 rounded-[2rem] transition-all hover:bg-[#1a1c24] hover:scale-[1.02] active:scale-95 text-left shadow-lg">
+                          <div className={`w-9 h-9 sm:w-10 sm:h-10 rounded-xl ${info.bg} ${info.color} flex items-center justify-center shrink-0`}>{info.icon}</div>
+                          <div className="space-y-1 w-full overflow-hidden">
+                            <h4 className="text-[14px] sm:text-[15px] font-bold text-white/90 truncate">{s.title}</h4>
+                            <span className="text-[9px] font-black uppercase tracking-widest text-white/20">{info.label}</span>
+                          </div>
+                        </button>
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); onHideOnHome(s.id); }}
+                          className="absolute -top-2 -right-2 w-8 h-8 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-lg active:scale-75 z-10"
+                          aria-label="Remove Session from Home"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -314,17 +362,43 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               />
             ))}
             {isLoading && (
-              <div className="flex gap-4 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 px-4 sm:px-6">
+              <div className="flex gap-4 sm:gap-6 animate-in fade-in slide-in-from-bottom-4 px-4 sm:px-6 w-full max-w-2xl">
                 <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#1a1c24] flex items-center justify-center shrink-0">
                   <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin" />
                 </div>
                 <div className="flex-1 space-y-3 pt-2">
-                   <p className="text-blue-400 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.3em]">{loadingSteps[loadingStep]}</p>
+                   <div className="flex items-center justify-between gap-4">
+                     <p className="text-blue-400 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.3em]">{loadingSteps[loadingStep]}</p>
+                     <button 
+                       onClick={onStop} 
+                       className="text-[8px] sm:text-[9px] font-black text-red-500/40 hover:text-red-500 uppercase tracking-widest transition-all active:scale-90 flex items-center gap-1.5"
+                     >
+                       <div className="w-1.5 h-1.5 bg-red-500 rounded-sm" />
+                       Cancel
+                     </button>
+                   </div>
                    <div className="h-0.5 w-full bg-white/5 rounded-full overflow-hidden"><div className="h-full bg-blue-500 animate-progress-indeterminate" /></div>
                 </div>
               </div>
             )}
             <div ref={messagesEndRef} />
+          </div>
+        )}
+        {isLoading && isHomePage && (
+          <div className="w-full max-w-4xl px-4 sm:px-6 mb-8 animate-in fade-in slide-in-from-bottom-4">
+             <div className="bg-[#1a1c24]/80 backdrop-blur border border-white/10 rounded-[2rem] p-6 shadow-2xl flex flex-col gap-3">
+                <div className="flex items-center justify-between gap-4">
+                   <p className="text-blue-400 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.3em]">{loadingSteps[loadingStep]}</p>
+                   <button 
+                     onClick={onStop} 
+                     className="text-[8px] sm:text-[9px] font-black text-red-500/40 hover:text-red-500 uppercase tracking-widest transition-all active:scale-90 flex items-center gap-1.5"
+                   >
+                     <div className="w-1.5 h-1.5 bg-red-500 rounded-sm" />
+                     Cancel
+                   </button>
+                </div>
+                <div className="h-0.5 w-full bg-white/5 rounded-full overflow-hidden"><div className="h-full bg-blue-500 animate-progress-indeterminate" /></div>
+             </div>
           </div>
         )}
       </div>
@@ -350,16 +424,34 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                      <span className="text-[10px] font-black text-blue-500 uppercase tracking-[0.2em]">Synthesis Engine</span>
                      <button type="button" onClick={() => setIsImageGenActive(false)} className="p-1 text-white/30 hover:text-white transition-colors active:scale-90"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
                   </div>
-                  <div className="flex flex-col sm:flex-row gap-4">
-                     <div className="bg-white/5 rounded-2xl p-1 flex gap-1 flex-1 overflow-x-auto no-scrollbar">
-                        {(['1K', '2K', '4K'] as const).map(res => (
-                          <button key={res} type="button" onClick={() => setImageSize(res)} className={`flex-1 min-w-[50px] py-2 rounded-xl text-[10px] font-black transition-all ${imageSize === res ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-white/40 hover:bg-white/5'}`}>{res}</button>
+                  <div className="flex flex-col gap-4">
+                     <div className="bg-white/5 rounded-2xl p-1 flex gap-1 overflow-x-auto no-scrollbar">
+                        {(['standard', 'high', 'pro', 'nano-banana'] as const).map(q => (
+                           <button key={q} type="button" onClick={() => setImageQuality(q)} className={`flex-1 min-w-[80px] py-2 rounded-xl text-[10px] font-black transition-all uppercase tracking-widest ${imageQuality === q ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20' : 'text-white/40 hover:bg-white/5'}`}>{q.replace('-', ' ')}</button>
                         ))}
                      </div>
-                     <div className="bg-white/5 rounded-2xl p-1 flex gap-1 flex-1 overflow-x-auto no-scrollbar">
-                        {(['1:1', '16:9', '9:16'] as const).map(ratio => (
-                          <button key={ratio} type="button" onClick={() => setAspectRatio(ratio as any)} className={`flex-1 min-w-[50px] py-2 rounded-xl text-[10px] font-black transition-all ${aspectRatio === ratio ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-white/40 hover:bg-white/5'}`}>{ratio}</button>
+                     <div className="bg-white/5 rounded-2xl p-1 flex gap-1 overflow-x-auto no-scrollbar">
+                        {(['512px', '1K', '2K', '4K'] as const).map(res => (
+                           <button key={res} type="button" onClick={() => setImageSize(res)} className={`flex-1 min-w-[60px] py-2 rounded-xl text-[10px] font-black transition-all ${imageSize === res ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-white/40 hover:bg-white/5'}`}>{res}</button>
                         ))}
+                     </div>
+                     <div className="bg-white/5 rounded-2xl p-1 flex gap-1 overflow-x-auto no-scrollbar">
+                        {(['1:1', '16:9', '9:16', '3:4', '4:3', '1:4', '1:8', '4:1', '8:1'] as const).map(ratio => (
+                           <button key={ratio} type="button" onClick={() => setAspectRatio(ratio as any)} className={`flex-1 min-w-[50px] py-2 rounded-xl text-[10px] font-black transition-all ${aspectRatio === ratio ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' : 'text-white/40 hover:bg-white/5'}`}>{ratio}</button>
+                        ))}
+                     </div>
+                     <div className="flex items-center justify-between px-2 py-1">
+                        <div className="flex items-center gap-2">
+                           <div className={`w-2 h-2 rounded-full ${useSearch ? 'bg-blue-500 animate-pulse' : 'bg-white/10'}`} />
+                           <span className="text-[10px] font-black text-white/40 uppercase tracking-widest">Search Grounding</span>
+                        </div>
+                        <button 
+                          type="button" 
+                          onClick={() => setUseSearch(!useSearch)}
+                          className={`w-10 h-5 rounded-full transition-all relative ${useSearch ? 'bg-blue-600' : 'bg-white/10'}`}
+                        >
+                           <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${useSearch ? 'left-6' : 'left-1'}`} />
+                        </button>
                      </div>
                   </div>
                </div>
@@ -373,8 +465,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   reader.onload = (ev) => {
                     const base64 = (ev.target?.result as string).split(',')[1];
                     const isAudio = file.type.startsWith('audio/');
+                    const isImage = file.type.startsWith('image/');
                     onUploadAndAnalyze({ 
-                      type: isAudio ? 'audio' : 'file', 
+                      type: isAudio ? 'audio' : (isImage ? 'image' : 'file'), 
                       url: URL.createObjectURL(file), 
                       mimeType: file.type, 
                       data: base64, 

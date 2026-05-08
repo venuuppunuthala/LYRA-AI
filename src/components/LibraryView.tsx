@@ -36,20 +36,26 @@ const LibraryView: React.FC<LibraryViewProps> = ({ sessions, initialTab = 'Pages
     )
   );
 
-  const ppts = sessions.flatMap(session => 
-    session.messages.flatMap(msg => (msg.attachments || [])
-      .filter(a => a.type === 'ppt' || a.mimeType.includes('ppt'))
-      .map(at => ({ ...at, sessionId: session.id }))
-    )
+  const ppts: ImageItem[] = sessions.flatMap(session => 
+    session.messages.flatMap(msg => {
+      const isPptMsg = msg.pptData || msg.attachments?.some(a => a.type === 'ppt' || a.mimeType.includes('ppt'));
+      return (msg.attachments || [])
+        .filter(a => a.type === 'ppt' || a.mimeType.includes('ppt') || a.mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation')
+        .map(at => ({ ...at, sessionId: session.id, messageId: msg.id, timestamp: msg.timestamp }));
+    })
   );
 
   const quizzes = sessions.filter(s => s.isQuiz && s.messages.length > 0);
   
-  const pages: any[] = [];
+  const pages: ImageItem[] = sessions.flatMap(session => 
+    session.messages.flatMap(msg => (msg.attachments || [])
+      .filter(a => a.mimeType === 'application/pdf' || a.mimeType.includes('text/plain') || a.type === 'document' || a.type === 'file')
+      .map(at => ({ ...at, sessionId: session.id, messageId: msg.id, timestamp: msg.timestamp }))
+    )
+  );
 
   const handleDownload = (url: string, name: string = 'file') => {
     if (!url || url === '#') {
-      alert("No valid download link found.");
       return;
     }
     const link = document.createElement('a');
@@ -60,21 +66,19 @@ const LibraryView: React.FC<LibraryViewProps> = ({ sessions, initialTab = 'Pages
     document.body.removeChild(link);
   };
 
-  const handleDelete = (e?: React.MouseEvent) => {
+  const handleDelete = (itemToDelete?: any, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const item = selectedItem;
+    const item = itemToDelete || selectedItem;
     if (!item) return;
 
     if (item.type === 'quiz' || item.type === 'ppt-session') {
-       if (item.sessionId && confirm("Delete this entire conversation and all associated history?")) {
+       if (item.sessionId) {
          onDeleteSession(item.sessionId);
-         setSelectedItem(null);
+         if (selectedItem?.sessionId === item.sessionId) setSelectedItem(null);
        }
     } else if (item.sessionId && item.messageId && item.url) {
-      if (confirm("Delete this asset permanently from history?")) {
-        onDeleteImage(item.sessionId, item.messageId, item.url);
-        setSelectedItem(null);
-      }
+       onDeleteImage(item.sessionId, item.messageId, item.url);
+       if (selectedItem?.url === item.url) setSelectedItem(null);
     }
   };
 
@@ -118,9 +122,9 @@ const LibraryView: React.FC<LibraryViewProps> = ({ sessions, initialTab = 'Pages
         <h1 className="text-sm font-black text-white tracking-[0.4em] uppercase">Library</h1>
 
         <div className="flex gap-3">
-          {selectedItem && (selectedItem.type === 'quiz' || selectedItem.type === 'ppt-session') && (
+          {selectedItem && (
             <button 
-              onClick={(e) => handleDelete(e)}
+              onClick={(e) => handleDelete(undefined, e)}
               className="w-10 h-10 flex items-center justify-center text-red-500 bg-red-500/10 hover:bg-red-500 hover:text-white rounded-xl border border-red-500/20 transition-all"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6"/></svg>
@@ -178,41 +182,42 @@ const LibraryView: React.FC<LibraryViewProps> = ({ sessions, initialTab = 'Pages
               </div>
             ) : activeTab === 'Quizzes' ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
-                {(activeItems as ChatSession[]).map((session) => (
-                  <div 
-                    key={session.id} 
-                    onClick={() => onSelectSession(session.id)}
-                    className={`p-8 bg-[#1a1c24] rounded-[2.5rem] border flex flex-col gap-6 hover:bg-[#252832] transition-all cursor-pointer group shadow-xl relative ${
-                       selectedItem?.sessionId === session.id ? 'border-blue-500 scale-[1.02]' : 'border-white/5'
-                    }`}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="w-12 h-12 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                {(activeItems as ChatSession[]).map((s) => (
+                  <div key={s.id} className="group relative">
+                    <div 
+                      onClick={() => onSelectSession(s.id)}
+                      className={`p-8 bg-[#1a1c24] rounded-[2.5rem] border flex flex-col gap-6 hover:bg-[#252832] transition-all cursor-pointer group shadow-xl relative ${
+                         selectedItem?.sessionId === s.id ? 'border-blue-500 scale-[1.02]' : 'border-white/5'
+                      }`}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="w-12 h-12 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                        </div>
+                        <div className="flex gap-2">
+                           <button 
+                             onClick={(e) => { e.stopPropagation(); handleDelete({type: 'quiz', sessionId: s.id}, e); }}
+                             className="w-10 h-10 flex items-center justify-center text-red-500 bg-red-500/10 hover:bg-red-500 hover:text-white rounded-xl border border-red-500/20 transition-all opacity-0 group-hover:opacity-100"
+                           >
+                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6"/></svg>
+                           </button>
+                          <span className="text-[9px] font-black text-white/10 uppercase tracking-widest">{new Date(s.updatedAt).toLocaleDateString()}</span>
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                         <button 
-                           onClick={(e) => { e.stopPropagation(); setSelectedItem({type: 'quiz', sessionId: session.id}); handleDelete(e); }}
-                           className="w-10 h-10 flex items-center justify-center text-red-500 bg-red-500/10 hover:bg-red-500 hover:text-white rounded-xl border border-red-500/20 transition-all opacity-0 group-hover:opacity-100"
-                         >
-                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6"/></svg>
-                         </button>
-                        <span className="text-[9px] font-black text-white/10 uppercase tracking-widest">{new Date(session.updatedAt).toLocaleDateString()}</span>
+                      <div>
+                        <h3 className="text-xl font-bold text-white mb-2 truncate">{s.title}</h3>
+                        <span className="text-[9px] font-black text-blue-500/60 border border-blue-500/20 bg-blue-500/5 px-3 py-1 rounded-full uppercase tracking-widest">Score: {s.quizState?.score || 0}/5</span>
                       </div>
-                    </div>
-                    <div>
-                      <h3 className="text-xl font-bold text-white mb-2 truncate">{session.title}</h3>
-                      <span className="text-[9px] font-black text-blue-500/60 border border-blue-500/20 bg-blue-500/5 px-3 py-1 rounded-full uppercase tracking-widest">Score: {session.quizState?.score || 0}/5</span>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
-                {activeTab === 'PPT' ? ppts.map((ppt, idx) => (
+                {activeTab === 'PPT' ? (activeItems as ImageItem[]).map((ppt, idx) => (
                   <div 
                     key={idx} 
-                    onClick={() => setSelectedItem({url: ppt.url, type: 'ppt', name: ppt.name, sessionId: ppt.sessionId})} 
+                    onClick={() => setSelectedItem({url: ppt.url, type: 'ppt', name: ppt.name, sessionId: ppt.sessionId, messageId: ppt.messageId, timestamp: ppt.timestamp})} 
                     className={`p-8 bg-[#1a1c24] rounded-[2.5rem] border flex flex-col gap-6 hover:bg-[#252832] transition-all cursor-pointer group shadow-xl ${
                        selectedItem?.url === ppt.url ? 'border-blue-500 scale-[1.02]' : 'border-white/5'
                     }`}
@@ -223,7 +228,7 @@ const LibraryView: React.FC<LibraryViewProps> = ({ sessions, initialTab = 'Pages
                        </div>
                        <div className="flex gap-2">
                          <button 
-                           onClick={(e) => { e.stopPropagation(); setSelectedItem({type: 'ppt-session', sessionId: ppt.sessionId}); handleDelete(e); }}
+                           onClick={(e) => { e.stopPropagation(); handleDelete({type: 'ppt-session', sessionId: ppt.sessionId}, e); }}
                            className="w-10 h-10 flex items-center justify-center text-red-500 bg-red-500/10 hover:bg-red-500 hover:text-white rounded-xl border border-red-500/20 transition-all opacity-0 group-hover:opacity-100"
                          >
                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6"/></svg>
@@ -240,6 +245,39 @@ const LibraryView: React.FC<LibraryViewProps> = ({ sessions, initialTab = 'Pages
                     <div className="flex items-center gap-2">
                        <span className="text-[8px] font-black bg-white/5 border border-white/10 px-2 py-0.5 rounded text-white/40 uppercase">OpenXML</span>
                        <span className="text-[8px] font-black bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded text-blue-400 uppercase">Archived</span>
+                    </div>
+                  </div>
+                )) : activeTab === 'Pages' ? (activeItems as ImageItem[]).map((page, idx) => (
+                  <div 
+                    key={idx} 
+                    onClick={() => setSelectedItem({url: page.url, type: 'page', name: page.name, sessionId: page.sessionId, messageId: page.messageId, timestamp: page.timestamp})} 
+                    className={`p-8 bg-[#1a1c24] rounded-[2.5rem] border flex flex-col gap-6 hover:bg-[#252832] transition-all cursor-pointer group shadow-xl ${
+                       selectedItem?.url === page.url ? 'border-blue-500 scale-[1.02]' : 'border-white/5'
+                    }`}
+                  >
+                    <div className="flex justify-between items-center">
+                       <div className="w-12 h-12 bg-blue-500/10 rounded-xl flex items-center justify-center text-blue-400">
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                       </div>
+                       <div className="flex gap-2">
+                         <button 
+                           onClick={(e) => { e.stopPropagation(); handleDelete({sessionId: page.sessionId, messageId: page.messageId, url: page.url, type: 'page'}, e); }}
+                           className="w-10 h-10 flex items-center justify-center text-red-500 bg-red-500/10 hover:bg-red-500 hover:text-white rounded-xl border border-red-500/20 transition-all opacity-0 group-hover:opacity-100"
+                         >
+                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6"/></svg>
+                         </button>
+                         <button 
+                           onClick={(e) => { e.stopPropagation(); handleDownload(page.url, page.name); }}
+                           className="w-10 h-10 flex items-center justify-center text-blue-500 bg-blue-500/10 hover:bg-blue-500 hover:text-white rounded-xl border border-blue-500/20 transition-all opacity-0 group-hover:opacity-100"
+                         >
+                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                         </button>
+                       </div>
+                    </div>
+                    <h3 className="text-lg font-bold text-white truncate">{page.name || 'Document'}</h3>
+                    <div className="flex items-center gap-2">
+                       <span className="text-[8px] font-black bg-white/5 border border-white/10 px-2 py-0.5 rounded text-white/40 uppercase">{page.mimeType.split('/')[1] || 'FILE'}</span>
+                       <span className="text-[8px] font-black bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded text-blue-400 uppercase">Analysis</span>
                     </div>
                   </div>
                 )) : null}
@@ -329,7 +367,7 @@ const LibraryView: React.FC<LibraryViewProps> = ({ sessions, initialTab = 'Pages
 
                <div className="mt-auto pt-10 grid grid-cols-2 gap-4">
                   <button 
-                    onClick={handleDelete}
+                    onClick={(e) => handleDelete(undefined, e)}
                     className="flex flex-col items-center justify-center gap-3 p-6 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-[2rem] border border-red-500/20 transition-all active:scale-95"
                   >
                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2M10 11v6M14 11v6"/></svg>

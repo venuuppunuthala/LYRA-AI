@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
-import { encodeAudio, decodeAudio, decodeAudioDataToBuffer } from '../services/gemini';
+import { encodeAudio, decodeAudio, decodeAudioDataToBuffer, getApiKey, handleGeminiError } from '../services/gemini';
 
 interface VoiceOverlayProps {
   onClose: () => void;
@@ -9,6 +9,7 @@ interface VoiceOverlayProps {
 
 const VoiceOverlay: React.FC<VoiceOverlayProps> = ({ onClose, onTurnComplete }) => {
   const [status, setStatus] = useState<'connecting' | 'listening' | 'speaking' | 'error'>('connecting');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [transcription, setTranscription] = useState('');
   const [modelResponse, setModelResponse] = useState('');
   
@@ -25,7 +26,8 @@ const VoiceOverlay: React.FC<VoiceOverlayProps> = ({ onClose, onTurnComplete }) 
     if (!isMountedRef.current) return;
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+      const apiKey = getApiKey();
+      const ai = new GoogleGenAI({ apiKey: apiKey as string });
       
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       const inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
@@ -37,7 +39,7 @@ const VoiceOverlay: React.FC<VoiceOverlayProps> = ({ onClose, onTurnComplete }) 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
       const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+        model: 'gemini-3.1-flash-live-preview',
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
@@ -66,7 +68,7 @@ const VoiceOverlay: React.FC<VoiceOverlayProps> = ({ onClose, onTurnComplete }) 
               sessionPromise.then(s => {
                 try {
                   s.sendRealtimeInput({
-                    media: { data: base64, mimeType: 'audio/pcm;rate=16000' }
+                    audio: { data: base64, mimeType: 'audio/pcm;rate=16000' }
                   });
                 } catch (e) {
                   console.warn("Failed to send audio chunk", e);
@@ -80,65 +82,84 @@ const VoiceOverlay: React.FC<VoiceOverlayProps> = ({ onClose, onTurnComplete }) 
           onmessage: async (message: LiveServerMessage) => {
             if (!isMountedRef.current) return;
 
-            if (message.serverContent?.inputTranscription) {
-              const text = message.serverContent.inputTranscription.text;
-              setTranscription(text);
-              currentInputTranscription.current += text;
-              setModelResponse(''); 
-            }
-            if (message.serverContent?.outputTranscription) {
-              const text = message.serverContent.outputTranscription.text;
-              setModelResponse(prev => prev + text);
-              currentOutputTranscription.current += text;
-            }
-
-            if (message.serverContent?.turnComplete) {
-              if (onTurnComplete && currentInputTranscription.current && currentOutputTranscription.current) {
-                onTurnComplete(currentInputTranscription.current, currentOutputTranscription.current);
+            try {
+              if (message.serverContent?.inputTranscription) {
+                const text = message.serverContent.inputTranscription.text;
+                setTranscription(text);
+                currentInputTranscription.current += text;
+                setModelResponse(''); 
               }
-              currentInputTranscription.current = '';
-              currentOutputTranscription.current = '';
-            }
+              if (message.serverContent?.outputTranscription) {
+                const text = message.serverContent.outputTranscription.text;
+                setModelResponse(prev => prev + text);
+                currentOutputTranscription.current += text;
+              }
 
-            const audioBase64 = message.serverContent?.modelTurn?.parts[0]?.inlineData?.data;
-            if (audioBase64) {
-              setStatus('speaking');
-              const bytes = decodeAudio(audioBase64);
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, audioContext.currentTime);
-              
-              const buffer = await decodeAudioDataToBuffer(bytes, audioContext, 24000, 1);
-              const sourceNode = audioContext.createBufferSource();
-              sourceNode.buffer = buffer;
-              sourceNode.connect(audioContext.destination);
-              
-              sourceNode.onended = () => {
-                sourcesRef.current.delete(sourceNode);
-                if (sourcesRef.current.size === 0) {
-                  setStatus('listening');
-                  setTimeout(() => {
-                    if (isMountedRef.current) setModelResponse('');
-                  }, 5000);
+              if (message.serverContent?.turnComplete) {
+                if (onTurnComplete && currentInputTranscription.current && currentOutputTranscription.current) {
+                  try {
+                    onTurnComplete(currentInputTranscription.current, currentOutputTranscription.current);
+                  } catch (e) {
+                    console.error("onTurnComplete error:", e);
+                  }
                 }
-              };
+                currentInputTranscription.current = '';
+                currentOutputTranscription.current = '';
+              }
 
-              sourceNode.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += buffer.duration;
-              sourcesRef.current.add(sourceNode);
-            }
+              const audioBase64 = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+              if (audioBase64) {
+                setStatus('speaking');
+                const bytes = decodeAudio(audioBase64);
+                nextStartTimeRef.current = Math.max(nextStartTimeRef.current, audioContext.currentTime);
+                
+                const buffer = await decodeAudioDataToBuffer(bytes, audioContext, 24000, 1);
+                if (!isMountedRef.current) return;
 
-            if (message.serverContent?.interrupted) {
-              sourcesRef.current.forEach(s => { try { s.stop(); } catch(e) {} });
-              sourcesRef.current.clear();
-              nextStartTimeRef.current = 0;
-              setStatus('listening');
-              setModelResponse('');
-              currentInputTranscription.current = '';
-              currentOutputTranscription.current = '';
+                const sourceNode = audioContext.createBufferSource();
+                sourceNode.buffer = buffer;
+                sourceNode.connect(audioContext.destination);
+                
+                sourceNode.onended = () => {
+                  sourcesRef.current.delete(sourceNode);
+                  if (sourcesRef.current.size === 0 && isMountedRef.current) {
+                    setStatus('listening');
+                    setTimeout(() => {
+                      if (isMountedRef.current) setModelResponse('');
+                    }, 5000);
+                  }
+                };
+
+                if (audioContext.state !== 'closed') {
+                  sourceNode.start(nextStartTimeRef.current);
+                  nextStartTimeRef.current += buffer.duration;
+                  sourcesRef.current.add(sourceNode);
+                }
+              }
+
+              if (message.serverContent?.interrupted) {
+                sourcesRef.current.forEach(s => { try { s.stop(); } catch(e) {} });
+                sourcesRef.current.clear();
+                nextStartTimeRef.current = 0;
+                setStatus('listening');
+                setModelResponse('');
+                currentInputTranscription.current = '';
+                currentOutputTranscription.current = '';
+              }
+            } catch (err) {
+              console.error("Error processing voice message:", err);
+              if (isMountedRef.current) {
+                setErrorMessage(handleGeminiError(err));
+                setStatus('error');
+              }
             }
           },
           onerror: (e) => {
             console.error("Live API Error:", e);
-            if (isMountedRef.current) setStatus('error');
+            if (isMountedRef.current) {
+              setErrorMessage(handleGeminiError(e));
+              setStatus('error');
+            }
           },
           onclose: () => {
             if (isMountedRef.current) setStatus('connecting');
@@ -148,20 +169,29 @@ const VoiceOverlay: React.FC<VoiceOverlayProps> = ({ onClose, onTurnComplete }) 
 
       sessionPromise.catch(err => {
         console.error("Session failed to connect:", err);
-        if (isMountedRef.current) setStatus('error');
+        if (isMountedRef.current) {
+          setErrorMessage(handleGeminiError(err));
+          setStatus('error');
+        }
       });
 
       sessionRef.current = await sessionPromise;
 
     } catch (err) {
       console.error("Voice initialization error:", err);
-      if (isMountedRef.current) setStatus('error');
+      if (isMountedRef.current) {
+        setErrorMessage(handleGeminiError(err));
+        setStatus('error');
+      }
     }
   };
 
   useEffect(() => {
     isMountedRef.current = true;
-    startSession();
+    startSession().catch(err => {
+      console.error("Failed to start voice session:", err);
+      if (isMountedRef.current) setStatus('error');
+    });
     return () => {
       isMountedRef.current = false;
       if (audioContextRef.current) audioContextRef.current.close();
@@ -255,14 +285,31 @@ const VoiceOverlay: React.FC<VoiceOverlayProps> = ({ onClose, onTurnComplete }) 
         </div>
 
         <div className="mt-auto flex flex-col items-center gap-12">
-          <div className="flex items-center gap-6 transition-all duration-500">
-            <div className="relative w-14 h-14 flex items-center justify-center">
-              <div className={`absolute inset-0 rounded-full bg-blue-500/20 ${status !== 'connecting' && status !== 'error' ? 'animate-status-ping' : ''}`} />
-              <div className={`w-4 h-4 rounded-full shadow-[0_0_20px_#3b82f6] ${status === 'error' ? 'bg-red-500 shadow-red-500' : 'bg-blue-400'}`} />
+          <div className="flex flex-col items-center gap-6">
+            <div className="flex items-center gap-6 transition-all duration-500">
+              <div className="relative w-14 h-14 flex items-center justify-center">
+                <div className={`absolute inset-0 rounded-full bg-blue-500/20 ${status !== 'connecting' && status !== 'error' ? 'animate-status-ping' : ''}`} />
+                <div className={`w-4 h-4 rounded-full shadow-[0_0_20px_#3b82f6] ${status === 'error' ? 'bg-red-500 shadow-red-500' : 'bg-blue-400'}`} />
+              </div>
+              <div className="flex flex-col items-start translate-y-1">
+                <span className={`text-white text-4xl font-black tracking-tight uppercase ${status === 'error' ? 'text-red-500' : ''}`}>
+                  {status === 'speaking' ? 'Speaking' : status === 'listening' ? 'Listening' : status === 'error' ? 'Expert Defect' : 'Initializing'}
+                </span>
+                {status === 'error' && errorMessage && (
+                  <span className="text-red-400/60 text-xs font-bold uppercase tracking-widest mt-1 max-w-sm truncate">
+                    {errorMessage}
+                  </span>
+                )}
+              </div>
             </div>
-            <span className={`text-white text-4xl font-black tracking-tight uppercase ${status === 'error' ? 'text-red-500' : ''}`}>
-              {status === 'speaking' ? 'Speaking' : status === 'listening' ? 'Listening' : status === 'error' ? 'Network Error' : 'Initializing'}
-            </span>
+            {status === 'error' && (
+              <button 
+                onClick={() => window.open(window.location.href, '_blank')}
+                className="px-8 py-2.5 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white rounded-full text-xs font-bold transition-all border border-white/10 tracking-widest uppercase"
+              >
+                Open in New Tab to Fix Permissions
+              </button>
+            )}
           </div>
 
           <button 
