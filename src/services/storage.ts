@@ -6,9 +6,29 @@
 const MAX_SESSIONS = 50; // Limit total sessions
 const LARGE_DATA_THRESHOLD = 100000; // 100KB - triggers cleanup if session is too big
 
+const cleanDataForStorage = (data: any): any => {
+  if (!data) return data;
+  if (Array.isArray(data)) {
+    return data.map(cleanDataForStorage);
+  }
+  if (typeof data === 'object') {
+    const cleaned: any = {};
+    for (const [key, value] of Object.entries(data)) {
+      if (key === 'data' && typeof value === 'string' && (value.startsWith('data:') || value.length > 1000)) {
+        cleaned[key] = undefined;
+      } else {
+        cleaned[key] = cleanDataForStorage(value);
+      }
+    }
+    return cleaned;
+  }
+  return data;
+};
+
 export const safeSaveToLocalStorage = (key: string, data: any): boolean => {
   try {
-    const serialized = JSON.stringify(data);
+    const cleaned = cleanDataForStorage(data);
+    const serialized = JSON.stringify(cleaned);
     localStorage.setItem(key, serialized);
     return false;
   } catch (error: any) {
@@ -43,7 +63,7 @@ export const safeSaveToLocalStorage = (key: string, data: any): boolean => {
             return s;
           });
 
-          localStorage.setItem(key, JSON.stringify(truncated));
+          localStorage.setItem(key, JSON.stringify(cleanDataForStorage(truncated)));
           console.log(`Cleanup successful. Retained ${limit} sessions with full fidelity.`);
           return true;
         } catch (retryError) {
@@ -53,7 +73,7 @@ export const safeSaveToLocalStorage = (key: string, data: any): boolean => {
 
       // 3. Nuclear option: Keep only the most recent session metadata, NO attachments, NO messages
       try {
-        console.error("Critical storage depletion. Retaining minimal metadata only.");
+        console.warn("Storage optimization triggered: Retaining minimal session list only.");
         const skeletalData = sortedSessions.slice(0, 10).map((s: any) => ({
           id: s.id,
           title: s.title,
@@ -65,11 +85,11 @@ export const safeSaveToLocalStorage = (key: string, data: any): boolean => {
         return true;
       } catch (lastDitchError) {
         localStorage.clear();
-        console.error("Absolute storage failure. Cache cleared.");
+        console.warn("Absolute storage cache cleared.");
         return true;
       }
     } else {
-      console.error("Storage Exception:", error);
+      console.warn("Storage Exception:", error);
       return false;
     }
   }
